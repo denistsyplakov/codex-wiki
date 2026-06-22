@@ -266,3 +266,59 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* New folder modal header */
+.new-folder-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.new-folder-close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.new-folder-close-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.new-folder-close-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* New folder name input */
+.new-folder-input {
+  padding: 7px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  width: 100%;
+  box-sizing: border-box;
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+.new-folder-input:focus {
+  border-color: var(--accent-color);
+}
+
+.new-folder-input:disabled {
+  opacity: 0.5;
+}

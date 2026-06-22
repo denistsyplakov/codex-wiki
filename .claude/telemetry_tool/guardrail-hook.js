@@ -132,11 +132,18 @@ function resolveClaude() {
     }
 }
 
-// Invoke claude --print with a prompt via stdin. Returns stdout string or null on failure.
-function callLlm(prompt, model, timeoutMs, claudeBin) {
+/**
+ * Invoke claude --print with a prompt via stdin.
+ * Uses --output-format json to capture the spawned session ID, then writes a
+ * hook_service marker to the artisyn telemetry so the server can identify and
+ * filter these sessions without relying on prompt content.
+ *
+ * Returns the LLM text response, or null on failure.
+ */
+function callLlm(prompt, model, timeoutMs, claudeBin, telemetryDir, writeTelemetryFn) {
     const result = spawnSync(
         claudeBin,
-        ['--model', model, '--print', '--no-session-persistence'],
+        ['--model', model, '--print', '--no-session-persistence', '--output-format', 'json'],
         {
             encoding: 'utf8',
             input: prompt,
@@ -156,12 +163,45 @@ function callLlm(prompt, model, timeoutMs, claudeBin) {
         hookLog(HOOK_FILE, null, 'error', msg, null);
         return null;
     }
-    return (result.stdout || '').trim();
+
+    const raw = (result.stdout || '').trim();
+
+    // Parse --output-format json envelope to get the session ID and the actual text.
+    // Falls back to treating stdout as plain text for older Claude Code versions.
+    let text = raw;
+    let spawnedSessionId = null;
+    try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.result === 'string') {
+            text = parsed.result;
+            spawnedSessionId = typeof parsed.session_id === 'string' ? parsed.session_id : null;
+        }
+    } catch {
+        // plain-text fallback — session ID unknown, no marker written
+    }
+
+    // Tag the spawned session as a hook-service session in the artisyn telemetry.
+    // The server detects this event via JSONB query and sets isHookService = true.
+    if (spawnedSessionId && telemetryDir && writeTelemetryFn) {
+        try {
+            writeTelemetryFn({
+                type: 'artisyn',
+                event: 'hook_service',
+                hook_service_type: 'guardrail',
+                timestamp: new Date().toISOString(),
+                session_id: spawnedSessionId,
+            }, telemetryDir);
+        } catch {
+            // telemetry failures must never affect guardrail behaviour
+        }
+    }
+
+    return text;
 }
 
 // Pass 1 — ask the LLM to list files referenced by the bash command.
 // Returns an array of path strings, or null on failure (fail-open).
-function extractReferencedFiles(bashCommand, model, timeoutMs, claudeBin) {
+function extractReferencedFiles(bashCommand, model, timeoutMs, claudeBin, telemetryDir, writeTelemetryFn) {
     const prompt = [
         'Analyze the following bash command and list every file path it references — including',
         'scripts it runs (e.g. node foo.js), files it reads (e.g. cat file.txt), source files,',
@@ -178,7 +218,7 @@ function extractReferencedFiles(bashCommand, model, timeoutMs, claudeBin) {
         'IMPORTANT: Your response must be valid JSON. Escape all backslashes as \\\\ (e.g. "C:\\\\Users\\\\foo").',
     ].join('\n');
 
-    const output = callLlm(prompt, model, timeoutMs, claudeBin);
+    const output = callLlm(prompt, model, timeoutMs, claudeBin, telemetryDir, writeTelemetryFn);
     if (output === null) return null;
     try {
         const match = output.match(/\[[\s\S]*\]/);
@@ -259,9 +299,9 @@ function buildAnalysisPrompt(bashCommand, activeChecks, fileContents) {
 }
 
 // Run two-pass LLM check. Returns block decision or null on failure (fail-open).
-function runLlmCheck(bashCommand, activeChecks, model, timeoutMs, claudeBin, projectDir, maxScriptBytes) {
+function runLlmCheck(bashCommand, activeChecks, model, timeoutMs, claudeBin, projectDir, maxScriptBytes, telemetryDir, writeTelemetryFn) {
     // Pass 1: get the list of files referenced by the command
-    const referencedFiles = extractReferencedFiles(bashCommand, model, timeoutMs, claudeBin);
+    const referencedFiles = extractReferencedFiles(bashCommand, model, timeoutMs, claudeBin, telemetryDir, writeTelemetryFn);
     if (referencedFiles === null) return null; // fail-open on LLM error
 
     // For each file: block if outside project or too large; read if inside and within size limit
@@ -296,7 +336,7 @@ function runLlmCheck(bashCommand, activeChecks, model, timeoutMs, claudeBin, pro
 
     // Pass 2: analyse command + file contents against security checks
     const prompt = buildAnalysisPrompt(bashCommand, activeChecks, fileContents);
-    const output = callLlm(prompt, model, timeoutMs, claudeBin);
+    const output = callLlm(prompt, model, timeoutMs, claudeBin, telemetryDir, writeTelemetryFn);
     if (output === null) return null;
 
     try {
@@ -441,7 +481,7 @@ try {
             }
 
             const claudeBin = resolveClaude();
-            const llmResult = runLlmCheck(bashCommand, activeChecks, model, timeoutMs, claudeBin, projectDir, maxScriptBytes);
+            const llmResult = runLlmCheck(bashCommand, activeChecks, model, timeoutMs, claudeBin, projectDir, maxScriptBytes, telemetryDir, writeTelemetry);
 
             // Fail-open: null means LLM error
             if (llmResult === null) return;

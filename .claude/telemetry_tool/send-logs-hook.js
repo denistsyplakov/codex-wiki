@@ -184,17 +184,270 @@ function buildClaudeMdContext(cwd) {
     try {
       const stat = fs.statSync(filePath);
       if (stat.isFile() && stat.size > 0) {
-        found.push({ path: filePath, bytes: stat.size });
+        found.push({ path: filePath, bytes: stat.size, lastModified: stat.mtimeMs });
       }
     } catch {
       // file absent
     }
   }
 
+  // Also scan .claude/rules/*.md — include content for rule files
+  const rulesDir = path.join(cwd, '.claude', 'rules');
+  try {
+    const entries = fs.readdirSync(rulesDir, { withFileTypes: true });
+    for (const e of entries) {
+      if (e.isFile() && e.name.endsWith('.md')) {
+        const rp = path.join(rulesDir, e.name);
+        try {
+          const stat = fs.statSync(rp);
+          if (stat.isFile() && stat.size > 0) {
+            let content;
+            try { content = fs.readFileSync(rp, 'utf8'); } catch { /* skip */ }
+            found.push({ path: rp, bytes: stat.size, lastModified: stat.mtimeMs, ...(content !== undefined ? { content } : {}) });
+          }
+        } catch { /* skip */ }
+      }
+    }
+  } catch { /* rules dir absent */ }
+
   if (found.length === 0) return null;
 
   const totalBytes = found.reduce((s, f) => s + f.bytes, 0);
   return { totalBytes, files: found };
+}
+
+// ---------------------------------------------------------------------------
+// Skill / Agent / MCP helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse YAML-style frontmatter from a markdown string.
+ * Returns { fm: Record<string,string>, body: string }.
+ * @param {string} text
+ * @returns {{ fm: Record<string, string>, body: string }}
+ */
+function parseFrontmatter(text) {
+  const fmMatch = text.match(/^---\n([\s\S]*?)\n---/m);
+  const fm = fmMatch ? fmMatch[1] : '';
+  const result = {};
+  const re = /^([\w-]+):\s*["']?(.+?)["']?\s*$/gm;
+  let m;
+  while ((m = re.exec(fm)) !== null) result[m[1]] = m[2];
+  return {
+    fm: result,
+    body: fmMatch ? text.slice(text.indexOf(fmMatch[0]) + fmMatch[0].length).trimStart() : text,
+  };
+}
+
+/**
+ * Recursively find all SKILL.md files under a directory, up to maxDepth.
+ * @param {string} dir
+ * @param {number} maxDepth
+ * @returns {string[]}
+ */
+function findSkillFiles(dir, maxDepth) {
+  const results = [];
+  if (maxDepth <= 0) return results;
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return results;
+  }
+  for (const e of entries) {
+    const full = path.join(dir, e.name);
+    if (e.isFile() && e.name === 'SKILL.md') {
+      results.push(full);
+    } else if (e.isDirectory()) {
+      results.push(...findSkillFiles(full, maxDepth - 1));
+    }
+  }
+  return results;
+}
+
+/**
+ * Collect skill definitions from .claude/skills/<name>/SKILL.md (project)
+ * and ~/.claude/plugins/ (plugin).
+ * @param {string} cwd
+ * @returns {Array<{ name: string, description: string, argumentHint: string, body: string, path: string, bytes: number, source: string }>|null}
+ */
+function buildSkillDefinitions(cwd) {
+  const skillsDir = path.join(cwd, '.claude', 'skills');
+  let subdirs;
+  try {
+    subdirs = fs.readdirSync(skillsDir, { withFileTypes: true }).filter((e) => e.isDirectory());
+  } catch {
+    subdirs = [];
+  }
+
+  const skills = [];
+  const projectNames = new Set();
+
+  for (const subdir of subdirs) {
+    const skillFile = path.join(skillsDir, subdir.name, 'SKILL.md');
+    try {
+      const stat = fs.statSync(skillFile);
+      if (!stat.isFile() || stat.size === 0) continue;
+      const text = fs.readFileSync(skillFile, 'utf8');
+      const { fm, body } = parseFrontmatter(text);
+      const name = fm['name'] || subdir.name;
+      projectNames.add(name);
+      skills.push({
+        name,
+        description: fm['description'] || '',
+        argumentHint: fm['argument-hint'] || '',
+        body,
+        path: skillFile,
+        bytes: stat.size,
+        lastModified: stat.mtimeMs,
+        source: 'project',
+      });
+    } catch (err) {
+      process.stderr.write(`[skill-definitions] skipping ${skillFile}: ${err.message}\n`);
+    }
+  }
+
+  // Scan ~/.claude/plugins/ for plugin skills
+  const pluginsDir = path.join(os.homedir(), '.claude', 'plugins');
+  const pluginSkillFiles = findSkillFiles(pluginsDir, 8);
+  for (const skillFile of pluginSkillFiles) {
+    try {
+      const stat = fs.statSync(skillFile);
+      if (!stat.isFile() || stat.size === 0) continue;
+      const text = fs.readFileSync(skillFile, 'utf8');
+      const { fm, body } = parseFrontmatter(text);
+      // Derive name from directory or frontmatter
+      const dirName = path.basename(path.dirname(skillFile));
+      const name = fm['name'] || dirName;
+      if (projectNames.has(name)) continue; // project takes priority
+      skills.push({
+        name,
+        description: fm['description'] || '',
+        argumentHint: fm['argument-hint'] || '',
+        body,
+        path: skillFile,
+        bytes: stat.size,
+        lastModified: stat.mtimeMs,
+        source: 'plugin',
+      });
+    } catch (err) {
+      process.stderr.write(`[skill-definitions] skipping plugin ${skillFile}: ${err.message}\n`);
+    }
+  }
+
+  return skills.length > 0 ? skills : null;
+}
+
+/**
+ * Collect agent definitions from .claude/agents/<name>/AGENT.md.
+ * @param {string} cwd
+ * @returns {Array<{ name: string, description: string, body: string, path: string, bytes: number }>|null}
+ */
+function buildAgentDefinitions(cwd) {
+  const agentsDir = path.join(cwd, '.claude', 'agents');
+  let subdirs;
+  try {
+    subdirs = fs.readdirSync(agentsDir, { withFileTypes: true }).filter((e) => e.isDirectory());
+  } catch {
+    return null;
+  }
+
+  const agents = [];
+  for (const subdir of subdirs) {
+    const agentFile = path.join(agentsDir, subdir.name, 'AGENT.md');
+    try {
+      const stat = fs.statSync(agentFile);
+      if (!stat.isFile() || stat.size === 0) continue;
+      const text = fs.readFileSync(agentFile, 'utf8');
+      const { fm, body } = parseFrontmatter(text);
+      agents.push({
+        name: fm['name'] || subdir.name,
+        description: fm['description'] || '',
+        body,
+        path: agentFile,
+        bytes: stat.size,
+        lastModified: stat.mtimeMs,
+      });
+    } catch (err) {
+      process.stderr.write(`[agent-definitions] skipping ${agentFile}: ${err.message}\n`);
+    }
+  }
+
+  return agents.length > 0 ? agents : null;
+}
+
+/**
+ * Extract MCP servers from a parsed JSON object (mcpServers key), with scrubbed credentials.
+ * @param {Record<string, unknown>} mcpServers
+ * @param {'project'|'user'} configSource
+ * @returns {Array<{ name: string, command: string, args: string, configSource: string }>}
+ */
+function extractMcpServers(mcpServers, configSource) {
+  const servers = [];
+  for (const [name, cfg] of Object.entries(mcpServers)) {
+    if (!cfg || typeof cfg !== 'object') continue;
+    const command = typeof cfg.command === 'string' ? cfg.command : '';
+    const rawArgs = Array.isArray(cfg.args) ? cfg.args : [];
+    const scrubbedArgs = rawArgs.map((a) =>
+      typeof a === 'string' ? a.replace(/:\/\/[^@]+@/g, '://') : String(a)
+    );
+    const url = typeof cfg.url === 'string' ? cfg.url.replace(/:\/\/[^@]+@/g, '://') : undefined;
+    const entry = { name, command, args: scrubbedArgs.join(' '), configSource };
+    if (url !== undefined) entry.url = url;
+    servers.push(entry);
+  }
+  return servers;
+}
+
+/**
+ * Read .mcp.json (project) and ~/.claude/settings.json (user) for MCP server definitions.
+ * @param {string} cwd
+ * @returns {Array<{ name: string, command: string, args: string, configSource: string }>|null}
+ */
+function buildMcpConfig(cwd) {
+  const servers = [];
+
+  // Project-level .mcp.json
+  try {
+    const raw = fs.readFileSync(path.join(cwd, '.mcp.json'), 'utf8');
+    const parsed = JSON.parse(raw);
+    const mcpServers = parsed && typeof parsed === 'object' ? parsed.mcpServers : null;
+    if (mcpServers && typeof mcpServers === 'object') {
+      servers.push(...extractMcpServers(mcpServers, 'project'));
+    }
+  } catch { /* absent or invalid */ }
+
+  // User-level ~/.claude/mcp.json (dedicated MCP config; higher priority than settings.json)
+  try {
+    const userMcpJson = path.join(os.homedir(), '.claude', 'mcp.json');
+    const raw = fs.readFileSync(userMcpJson, 'utf8');
+    const parsed = JSON.parse(raw);
+    const mcpServers = parsed && typeof parsed === 'object' ? parsed.mcpServers : null;
+    if (mcpServers && typeof mcpServers === 'object') {
+      const knownNames = new Set(servers.map((s) => s.name));
+      const userServers = extractMcpServers(mcpServers, 'user').filter(
+        (s) => !knownNames.has(s.name),
+      );
+      servers.push(...userServers);
+    }
+  } catch { /* absent or invalid */ }
+
+  // User-level ~/.claude/settings.json (fallback; deduplicates against project + mcp.json)
+  try {
+    const userSettings = path.join(os.homedir(), '.claude', 'settings.json');
+    const raw = fs.readFileSync(userSettings, 'utf8');
+    const parsed = JSON.parse(raw);
+    const mcpServers = parsed && typeof parsed === 'object' ? parsed.mcpServers : null;
+    if (mcpServers && typeof mcpServers === 'object') {
+      const knownNames = new Set(servers.map((s) => s.name));
+      const userServers = extractMcpServers(mcpServers, 'user').filter(
+        (s) => !knownNames.has(s.name),
+      );
+      servers.push(...userServers);
+    }
+  } catch { /* absent or invalid */ }
+
+  return servers.length > 0 ? servers : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -399,12 +652,29 @@ async function main() {
       continue;
     }
 
-    // For all claude/subagent sessions, prepend a system-context event with CLAUDE.md sizes
-    if (namespace === 'claude' || namespace === 'claude-subagent') {
+    // For artisyn sessions only, prepend project-context events (system-context, skill/agent/mcp
+    // definitions). The artisyn log is the metadata carrier; the server merges it with the
+    // claude log when serving session data to the viewer.
+    if (namespace === 'artisyn') {
       const claudeMdCtx = buildClaudeMdContext(cwd);
       if (claudeMdCtx) {
-        const contextLine = JSON.stringify({ type: 'system-context', claudeMd: claudeMdCtx }) + '\n';
-        body = Buffer.concat([Buffer.from(contextLine, 'utf8'), body]);
+        const line = JSON.stringify({ type: 'system-context', claudeMd: claudeMdCtx }) + '\n';
+        body = Buffer.concat([Buffer.from(line, 'utf8'), body]);
+      }
+      const skillDefs = buildSkillDefinitions(cwd);
+      if (skillDefs) {
+        const line = JSON.stringify({ type: 'skill-definitions', projectRoot: cwd, skills: skillDefs }) + '\n';
+        body = Buffer.concat([Buffer.from(line, 'utf8'), body]);
+      }
+      const agentDefs = buildAgentDefinitions(cwd);
+      if (agentDefs) {
+        const line = JSON.stringify({ type: 'agent-definitions', projectRoot: cwd, agents: agentDefs }) + '\n';
+        body = Buffer.concat([Buffer.from(line, 'utf8'), body]);
+      }
+      const mcpCfg = buildMcpConfig(cwd);
+      if (mcpCfg) {
+        const line = JSON.stringify({ type: 'mcp-config', servers: mcpCfg }) + '\n';
+        body = Buffer.concat([Buffer.from(line, 'utf8'), body]);
       }
     }
 

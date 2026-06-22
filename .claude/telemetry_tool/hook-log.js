@@ -10,6 +10,31 @@ const _hookVersion = (() => {
   } catch { return null; }
 })();
 
+const MAX_LOG_SIZE = 100 * 1024; // 100 KB
+const MAX_LOG_FILES = 3;         // hook.log + hook.log.1 + hook.log.2
+
+function rotateLog(logPath) {
+  try {
+    const stat = fs.statSync(logPath);
+    if (stat.size < MAX_LOG_SIZE) return;
+  } catch {
+    return; // file doesn't exist yet, nothing to rotate
+  }
+
+  // Delete the oldest file if it would exceed the limit
+  const oldest = `${logPath}.${MAX_LOG_FILES - 1}`;
+  try { fs.unlinkSync(oldest); } catch { /* doesn't exist */ }
+
+  // Shift: hook.log.1 → hook.log.2, hook.log → hook.log.1
+  for (let i = MAX_LOG_FILES - 2; i >= 1; i--) {
+    const src = `${logPath}.${i}`;
+    const dst = `${logPath}.${i + 1}`;
+    try { fs.renameSync(src, dst); } catch { /* doesn't exist */ }
+  }
+
+  try { fs.renameSync(logPath, `${logPath}.1`); } catch { /* ignore */ }
+}
+
 /**
  * Append a structured log entry to <project-root>/.ai_work_dir/hook.log
  *
@@ -24,11 +49,13 @@ function hookLog(hookFile, sessionId, event, message, cwd) {
     const base = cwd || process.cwd();
     const dir = path.join(getGitRoot(base), '.ai_work_dir');
     fs.mkdirSync(dir, { recursive: true });
+    const logPath = path.join(dir, 'hook.log');
+    rotateLog(logPath);
     const timestamp = new Date().toISOString();
     const sid = sessionId || '-';
     const versionTag = (event === 'activate' && _hookVersion) ? ` [hook v${_hookVersion}]` : '';
     const line = `${timestamp} [${hookFile}] [${sid}] [${event}] ${message}${versionTag}\n`;
-    fs.appendFileSync(path.join(dir, 'hook.log'), line);
+    fs.appendFileSync(logPath, line);
   } catch {
     // logging must never cause hook failures
   }

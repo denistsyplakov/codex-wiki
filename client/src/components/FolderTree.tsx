@@ -19,6 +19,7 @@ interface FolderTreeProps {
   keyboardSelectedPath?: string | null;
   onFolderHover?: (path: string) => void;
   onRequestMove?: (sourcePath: string) => void;
+  onRequestCreate?: (parentPath: string) => void;
 }
 
 const FolderTreeItem: React.FC<FolderTreeProps> = ({
@@ -30,19 +31,19 @@ const FolderTreeItem: React.FC<FolderTreeProps> = ({
   keyboardSelectedPath,
   onFolderHover,
   onRequestMove,
+  onRequestCreate,
 }) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [isRenaming, setIsRenaming] = useState(false);
   const [newName, setNewName] = useState(node.name);
   const [showContextMenu, setShowContextMenu] = useState(false);
-  const [isCreating, setIsCreating] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const contextMenuRef = useRef<HTMLDivElement>(null);
 
   const isSelected = selectedFolder === node.path;
   const isKeyboardSelected = keyboardSelectedPath === node.path;
   const hasChildren = node.children.length > 0;
-  const isBusy = isCreating || isDeleting;
+  const isBusy = isDeleting;
 
   // Sync with parent's expanded state if provided
   useEffect(() => {
@@ -87,25 +88,9 @@ const FolderTreeItem: React.FC<FolderTreeProps> = ({
     onSelectFolder(node.path);
   };
 
-  const handleCreateFolder = async () => {
-    const folderName = prompt("Enter folder name:");
-    if (folderName) {
-      setIsCreating(true);
-      setShowContextMenu(false);
-      try {
-        const newPath =
-          node.path === "/" ? folderName : `${node.path}/${folderName}`;
-        await api.createFolder(newPath);
-        onRefresh();
-      } catch (err) {
-        console.error("Failed to create folder:", err);
-        // Show inline error feedback
-      } finally {
-        setIsCreating(false);
-      }
-    } else {
-      setShowContextMenu(false);
-    }
+  const handleCreateFolder = () => {
+    setShowContextMenu(false);
+    onRequestCreate?.(node.path);
   };
 
   const handleRename = () => {
@@ -226,16 +211,6 @@ const FolderTreeItem: React.FC<FolderTreeProps> = ({
               <Folder size={14} aria-hidden="true" />
             )}{" "}
             {node.name}
-            {isCreating && (
-              <span
-                className="folder-creating"
-                role="status"
-                aria-live="polite"
-              >
-                {" "}
-                (creating...)
-              </span>
-            )}
           </span>
         )}
         {showContextMenu && !isBusy && (
@@ -248,11 +223,10 @@ const FolderTreeItem: React.FC<FolderTreeProps> = ({
           >
             <button
               onClick={handleCreateFolder}
-              disabled={isCreating}
               role="menuitem"
               aria-label="Create new folder"
             >
-              {isCreating ? "Creating..." : "New Folder"}
+              New Folder
             </button>
             {node.path !== "/" && (
               <>
@@ -296,6 +270,7 @@ const FolderTreeItem: React.FC<FolderTreeProps> = ({
               keyboardSelectedPath={keyboardSelectedPath}
               onFolderHover={onFolderHover}
               onRequestMove={onRequestMove}
+              onRequestCreate={onRequestCreate}
             />
           ))}
         </div>
@@ -356,6 +331,10 @@ export const FolderTree: React.FC<
   const [moveDestination, setMoveDestination] = useState<string>("");
   const [isMoving, setIsMoving] = useState(false);
   const [moveError, setMoveError] = useState<string | null>(null);
+  const [createFolderParent, setCreateFolderParent] = useState<string | null>(null);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [createFolderError, setCreateFolderError] = useState<string | null>(null);
   const treeRef = useRef<HTMLElement>(null);
 
   // Flatten visible folders for keyboard navigation
@@ -419,6 +398,34 @@ export const FolderTree: React.FC<
     setMoveError(null);
   };
 
+  const handleRequestCreate = (parentPath: string) => {
+    setCreateFolderParent(parentPath);
+    setNewFolderName("");
+    setCreateFolderError(null);
+  };
+
+  const handleCreateFolderConfirm = async () => {
+    if (!createFolderParent || !newFolderName.trim()) return;
+    setIsCreatingFolder(true);
+    setCreateFolderError(null);
+    try {
+      const trimmed = newFolderName.trim();
+      const newPath = createFolderParent === "/" || createFolderParent === "" ? trimmed : `${createFolderParent}/${trimmed}`;
+      await api.createFolder(newPath);
+      setCreateFolderParent(null);
+      onRefresh();
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : ((err as { response?: { data?: { message?: string } } })?.response
+              ?.data?.message ?? "Failed to create folder");
+      setCreateFolderError(msg);
+    } finally {
+      setIsCreatingFolder(false);
+    }
+  };
+
   const handleMoveConfirm = async () => {
     if (!moveSource) return;
     setIsMoving(true);
@@ -467,6 +474,7 @@ export const FolderTree: React.FC<
         keyboardSelectedPath={keyboardSelectedPath}
         onFolderHover={handleFolderHover}
         onRequestMove={handleRequestMove}
+        onRequestCreate={handleRequestCreate}
       />
       {moveSource && (
         <div
@@ -520,6 +528,72 @@ export const FolderTree: React.FC<
                 disabled={isMoving || moveDestination === moveSource}
               >
                 {isMoving ? "Moving..." : "Move Here"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {createFolderParent !== null && (
+        <div
+          className="move-modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="New folder"
+          onClick={() => !isCreatingFolder && setCreateFolderParent(null)}
+        >
+          <div
+            className="move-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="new-folder-modal-header">
+              <h3 className="move-modal-title">New Folder</h3>
+              <button
+                className="new-folder-close-btn"
+                onClick={() => setCreateFolderParent(null)}
+                disabled={isCreatingFolder}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <p className="move-modal-subtitle">
+              {createFolderParent === "/" || createFolderParent === ""
+                ? "Inside root folder"
+                : `Inside "${createFolderParent.split("/").pop()}"`}
+            </p>
+            <input
+              className="new-folder-input"
+              type="text"
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleCreateFolderConfirm();
+                if (e.key === "Escape") setCreateFolderParent(null);
+              }}
+              placeholder="Folder name"
+              autoFocus
+              disabled={isCreatingFolder}
+              aria-label="New folder name"
+            />
+            {createFolderError && (
+              <p className="move-modal-error" role="alert">
+                {createFolderError}
+              </p>
+            )}
+            <div className="move-modal-actions">
+              <button
+                className="move-modal-cancel"
+                onClick={() => setCreateFolderParent(null)}
+                disabled={isCreatingFolder}
+              >
+                Cancel
+              </button>
+              <button
+                className="move-modal-confirm"
+                onClick={handleCreateFolderConfirm}
+                disabled={isCreatingFolder || !newFolderName.trim()}
+              >
+                {isCreatingFolder ? "Creating..." : "Create"}
               </button>
             </div>
           </div>
