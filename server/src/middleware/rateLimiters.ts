@@ -1,7 +1,24 @@
 import rateLimit from "express-rate-limit";
+import type { Options } from "express-rate-limit";
+import type { Request, Response, NextFunction } from "express";
 
 // Skip rate limiting in test environment
 const isTestEnv = process.env.NODE_ENV === "test";
+
+function makeRateLimitHandler(label: string) {
+  return (req: Request, res: Response, _next: NextFunction, options: Options) => {
+    const max = typeof options.max === "number" ? options.max : "?";
+    const windowSec =
+      typeof options.windowMs === "number" ? options.windowMs / 1000 : "?";
+    const err = new Error(`Rate limit exceeded: ${label}`);
+    console.error(
+      `[429] ${label} — ${req.method} ${req.originalUrl} from ${req.ip ?? "unknown"}` +
+        ` (max ${max} req / ${windowSec}s)\n` +
+        err.stack,
+    );
+    res.status(429).json(options.message);
+  };
+}
 
 /**
  * Rate limiter for read operations (get pages, list folders, view history)
@@ -15,6 +32,7 @@ export const readLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => isTestEnv,
+  handler: makeRateLimitHandler("readLimiter"),
 });
 
 /**
@@ -29,88 +47,95 @@ export const staticFileLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => isTestEnv,
+  handler: makeRateLimitHandler("staticFileLimiter"),
 });
 
 /**
  * Rate limiter for health check and metadata endpoints
  * These are lightweight but should still be protected
- * Limit: 60 requests per minute per IP
+ * Limit: 120 requests per minute per IP
  */
 export const healthCheckLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 60,
+  max: 120,
   message: { error: "Too many health check requests" },
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => isTestEnv,
+  handler: makeRateLimitHandler("healthCheckLimiter"),
 });
 
 /**
  * Rate limiter for file operations (create, update, delete, rename, move)
  * These are expensive operations that modify the file system and git history
- * Limit: 30 requests per minute per IP
+ * Limit: 120 requests per minute per IP
  */
 export const fileOperationLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 30,
+  max: 120,
   message: { error: "Too many file operations, please slow down" },
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => isTestEnv,
+  handler: makeRateLimitHandler("fileOperationLimiter"),
 });
 
 /**
  * Rate limiter for file transfers (upload/download attachments)
  * These are expensive I/O operations that can consume bandwidth
- * Limit: 60 requests per minute per IP (higher than operations since viewing attachments is common)
+ * Limit: 120 requests per minute per IP
  */
 export const fileTransferLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 60,
+  max: 120,
   message: { error: "Too many file transfers, please slow down" },
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => isTestEnv,
+  handler: makeRateLimitHandler("fileTransferLimiter"),
 });
 
 /**
  * Rate limiter for search operations
  * Search can be expensive as it scans multiple files
- * Limit: 60 requests per minute per IP
+ * Limit: 120 requests per minute per IP
  */
 export const searchLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 60,
+  max: 120,
   message: { error: "Too many search requests, please slow down" },
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => isTestEnv,
+  handler: makeRateLimitHandler("searchLimiter"),
 });
 
 /**
  * Rate limiter for AI chat operations
  * AI calls are expensive (API costs and server resources)
- * Limit: 20 requests per minute per IP
+ * Limit: 120 requests per minute per IP
  */
 export const aiLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 20,
+  max: 120,
   message: { error: "Too many AI requests, please slow down" },
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => isTestEnv,
+  handler: makeRateLimitHandler("aiLimiter"),
 });
 
 /**
  * Rate limiter for authentication operations
  * Prevents brute force attacks on login
- * Limit: 10 requests per minute per IP
+ * Limit: 120 requests per minute per IP
  */
 export const authLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 10,
+  max: 120,
   message: { error: "Too many login attempts, please try again later" },
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => isTestEnv,
+  handler: makeRateLimitHandler("authLimiter"),
 });
