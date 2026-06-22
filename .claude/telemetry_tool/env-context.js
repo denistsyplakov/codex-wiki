@@ -1,6 +1,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const {getGitRoot} = require('./git-context');
 
 // ---------------------------------------------------------------------------
 // .env loader (no external deps)
@@ -33,12 +34,11 @@ function loadEnv(envPath) {
 // ---------------------------------------------------------------------------
 function resolveTelemetryDir(cwd, envVars) {
   const envVal = (envVars.TELEMETRY_DIR || '').trim();
+  const root = getGitRoot(cwd || process.cwd());
   if (envVal) {
-    return path.isAbsolute(envVal)
-      ? envVal
-      : path.resolve(cwd || path.resolve(__dirname), envVal);
+    return path.isAbsolute(envVal) ? envVal : path.resolve(root, envVal);
   }
-  return path.resolve(cwd || path.resolve(__dirname), '.ai_work_dir', 'telemetry');
+  return path.resolve(root, '.ai_work_dir', 'telemetry');
 }
 
 // ---------------------------------------------------------------------------
