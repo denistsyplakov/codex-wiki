@@ -106,6 +106,22 @@ app.use(
   }),
 );
 
+// Log all 4xx responses with request context and stack trace
+app.use((req: Request, res: Response, next) => {
+  const capturedStack = new Error().stack;
+  res.on("finish", () => {
+    if (res.statusCode >= 400 && res.statusCode < 500) {
+      console.error(
+        `[${res.statusCode}] ${req.method} ${req.originalUrl}\n` +
+          `  IP: ${req.ip ?? "unknown"}\n` +
+          `  Body: ${JSON.stringify(req.body)}\n` +
+          `  Stack at request entry:\n${capturedStack}`,
+      );
+    }
+  });
+  next();
+});
+
 // API Documentation
 app.get("/api", (req: Request, res: Response) => {
   const baseUrl = `${req.protocol}://${req.get("host")}`;

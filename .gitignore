@@ -12,3 +12,5 @@ test-data/
 data/*
 !data/Codex Documentation/
 !data/templates/
+/.ai_work_dir/
+/.idea/
