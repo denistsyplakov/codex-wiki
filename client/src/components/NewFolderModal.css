@@ -1,0 +1,114 @@
+.new-folder-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.new-folder-modal {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  width: 320px;
+  max-width: 90vw;
+  box-shadow: 0 8px 32px var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.new-folder-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.new-folder-title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.new-folder-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.new-folder-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.new-folder-input {
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  width: 100%;
+  box-sizing: border-box;
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+.new-folder-input:focus {
+  border-color: var(--accent-color);
+}
+
+.new-folder-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.new-folder-cancel {
+  padding: 6px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  transition: background var(--transition-fast);
+}
+
+.new-folder-cancel:hover {
+  background: var(--bg-hover);
+}
+
+.new-folder-confirm {
+  padding: 6px 14px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--accent-color);
+  color: var(--accent-text);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  transition: background var(--transition-fast);
+}
+
+.new-folder-confirm:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.new-folder-confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

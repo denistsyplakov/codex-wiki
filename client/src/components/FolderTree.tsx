@@ -9,6 +9,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import "./FolderTree.css";
+import { NewFolderModal } from "./NewFolderModal";
 
 interface FolderTreeProps {
   node: FolderNode;
@@ -37,6 +38,7 @@ const FolderTreeItem: React.FC<FolderTreeProps> = ({
   const [showContextMenu, setShowContextMenu] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [showNewFolderModal, setShowNewFolderModal] = useState(false);
   const contextMenuRef = useRef<HTMLDivElement>(null);
 
   const isSelected = selectedFolder === node.path;
@@ -87,24 +89,23 @@ const FolderTreeItem: React.FC<FolderTreeProps> = ({
     onSelectFolder(node.path);
   };
 
-  const handleCreateFolder = async () => {
-    const folderName = prompt("Enter folder name:");
-    if (folderName) {
-      setIsCreating(true);
-      setShowContextMenu(false);
-      try {
-        const newPath =
-          node.path === "/" ? folderName : `${node.path}/${folderName}`;
-        await api.createFolder(newPath);
-        onRefresh();
-      } catch (err) {
-        console.error("Failed to create folder:", err);
-        // Show inline error feedback
-      } finally {
-        setIsCreating(false);
-      }
-    } else {
-      setShowContextMenu(false);
+  const handleCreateFolder = () => {
+    setShowContextMenu(false);
+    setShowNewFolderModal(true);
+  };
+
+  const handleNewFolderConfirm = async (folderName: string) => {
+    setShowNewFolderModal(false);
+    setIsCreating(true);
+    try {
+      const newPath =
+        node.path === "/" ? folderName : `${node.path}/${folderName}`;
+      await api.createFolder(newPath);
+      onRefresh();
+    } catch (err) {
+      console.error("Failed to create folder:", err);
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -225,7 +226,7 @@ const FolderTreeItem: React.FC<FolderTreeProps> = ({
             ) : (
               <Folder size={14} aria-hidden="true" />
             )}{" "}
-            {node.name}
+            {node.name || "root"}
             {isCreating && (
               <span
                 className="folder-creating"
@@ -299,6 +300,13 @@ const FolderTreeItem: React.FC<FolderTreeProps> = ({
             />
           ))}
         </div>
+      )}
+      {showNewFolderModal && (
+        <NewFolderModal
+          parentPath={node.path}
+          onConfirm={handleNewFolderConfirm}
+          onClose={() => setShowNewFolderModal(false)}
+        />
       )}
     </div>
   );
