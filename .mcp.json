@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "postgres": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://postgres:pw@localhost:5432/a-log"
+      ]
+    },
+    "webstorm": {
+      "url": "http://127.0.0.1:64542/stream",
+      "type": "http"
+    },
+    "playwright": {
+      "type": "stdio",
+      "command": "npx.cmd",
+      "args": [
+        "@playwright/mcp@latest",
+        "--isolated",
+        "--headless"
+      ],
+      "env": {}
+    }
+  }
+}

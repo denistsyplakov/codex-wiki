@@ -5,14 +5,14 @@
  * access to explicitly prohibited files.
  * Also evaluates Bash tool calls via LLM when enabled.
  *
- * Configuration (in .claude/telemetry_tool/.env):
- *   GUARDRAIL_ENABLED=true|false          — set to "false" to disable (default: enabled)
- *   GUARDRAIL_PROHIBITED_FILES=a,b,...    — comma-separated paths relative to project root
- *                                           that are always blocked regardless of location
- *   GUARDRAIL_LLM_ENABLED=true|false      — enable LLM checks for Bash tool (default: false)
- *   GUARDRAIL_LLM_MODEL=haiku             — Claude model for LLM checks (default: haiku)
- *   GUARDRAIL_LLM_TIMEOUT_MS=10000        — timeout for LLM calls in ms (default: 10000)
- *   GUARDRAIL_BLOCK_NETWORK=true|false    — block network access in Bash commands (default: false)
+ * Configuration (in .artisyn/config/log-hub.json / log-hub.local.json):
+ *   guardrailEnabled: true|false          — set to false to disable (default: true)
+ *   guardrailProhibitedFiles: [a, b, ...] — paths relative to project root that are
+ *                                           always blocked regardless of location
+ *   guardrailLlmEnabled: true|false       — enable LLM checks for Bash tool (default: false)
+ *   guardrailLlmModel: "haiku"            — Claude model for LLM checks (default: haiku)
+ *   guardrailLlmTimeoutMs: 10000          — timeout for LLM calls in ms (default: 10000)
+ *   guardrailBlockNetwork: true|false     — block network access in Bash commands (default: false)
  *                                           Note: WebFetch/WebSearch are not blockable via hooks;
  *                                           use permissions.deny in settings.json for those.
  *
@@ -31,6 +31,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { buildProcessMarkerEnv } = require('./process-marker');
 let hookLog;
 try {
     ({ hookLog } = require('./hook-log'));
@@ -39,6 +40,13 @@ try {
 }
 
 const HOOK_FILE = 'guardrail-hook.js';
+
+// Marker exported into the `claude -p` session callLlm() spawns, inherited from there by that
+// session's own hooks. post-turn-analysis-hook.js refuses to run a turn evaluation when it sees it,
+// so a guardrail LLM check can never trigger an advisor/attribution evaluation of itself. Same
+// variable and same purpose as claude-invoke-async.js's copy — keep the two in sync.
+const HOOK_SERVICE_ENV_VAR = 'ARTISYN_HOOK_SERVICE';
+const HOOK_SERVICE_NAME = 'guardrail';
 
 // Tools whose file-path arguments are subject to static guardrail checks
 const STATIC_CHECKED_TOOLS = new Set(['Read', 'Write', 'Edit', 'Glob']);
@@ -120,7 +128,10 @@ function writeBlock(reason) {
 function resolveClaude() {
     try {
         if (process.platform === 'win32') {
-            const result = spawnSync('where', ['claude.cmd'], { encoding: 'utf8' });
+            // windowsHide: see the note in git-context.js — required on every subprocess this hook
+            // starts, since some of them run inside console-less detached processes. Pinned by
+            // __tests__/no-visible-window.test.js.
+            const result = spawnSync('where', ['claude.cmd'], { encoding: 'utf8', windowsHide: true });
             if (result.status === 0 && result.stdout.trim()) {
                 return 'claude.cmd';
             }
@@ -132,16 +143,37 @@ function resolveClaude() {
     }
 }
 
-// Invoke claude --print with a prompt via stdin. Returns stdout string or null on failure.
+/**
+ * Invoke claude --print with a prompt via stdin.
+ *
+ * `--output-format json` is kept for the envelope parsing below (and because dropping it would
+ * change the stdout contract), but the spawned session id is no longer recorded anywhere: since
+ * T-105 a hook-service session writes no telemetry at all, so there is no artisyn file to mark.
+ *
+ * Returns the LLM text response, or null on failure.
+ */
 function callLlm(prompt, model, timeoutMs, claudeBin) {
     const result = spawnSync(
         claudeBin,
-        ['--model', model, '--print', '--no-session-persistence'],
+        ['--model', model, '--print', '--no-session-persistence', '--output-format', 'json'],
         {
             encoding: 'utf8',
             input: prompt,
             timeout: timeoutMs,
             shell: process.platform === 'win32',
+            // windowsHide: see the note in git-context.js. Doubly relevant here — `shell: true` on
+            // Windows means this goes through cmd.exe, which is itself a console application.
+            // Pinned by __tests__/no-visible-window.test.js.
+            windowsHide: true,
+            // Inherit this hook's environment (spawnSync's default when `env` is omitted) plus the
+            // hook-service marker — see HOOK_SERVICE_ENV_VAR above — plus the inert ARTISYN_PROC_*
+            // provenance markers (process-marker.js), which nothing branches on.
+            env: Object.assign(
+                {},
+                process.env,
+                { [HOOK_SERVICE_ENV_VAR]: HOOK_SERVICE_NAME },
+                buildProcessMarkerEnv(`claude-invoke:${model}`, { hookFile: 'guardrail-hook.js' }),
+            ),
         }
     );
     if (result.error && (result.error.code === 'ETIMEDOUT' || result.status === null)) {
@@ -156,7 +188,37 @@ function callLlm(prompt, model, timeoutMs, claudeBin) {
         hookLog(HOOK_FILE, null, 'error', msg, null);
         return null;
     }
-    return (result.stdout || '').trim();
+
+    const raw = (result.stdout || '').trim();
+
+    // Parse --output-format json envelope to get the session ID and the actual text.
+    // Falls back to treating stdout as plain text for older Claude Code versions.
+    let text = raw;
+    let spawnedSessionId = null;
+    try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.result === 'string') {
+            text = parsed.result;
+            spawnedSessionId = typeof parsed.session_id === 'string' ? parsed.session_id : null;
+        }
+    } catch {
+        // plain-text fallback — session ID unknown, no marker written
+    }
+
+    // No `hook_service` marker is written any more (T-105). The marker existed so the server could
+    // set isHookService = true and hide these evaluation sessions from the session list — but it was
+    // also the only thing that CREATED an artisyn file for them, and writing it meant one uploaded
+    // session per evaluation whose sole purpose was to be filtered back out. Since `write-telemetry.js`
+    // now suppresses everything inside a hook-service session, an evaluation session produces no
+    // telemetry at all and there is nothing left to identify or hide. Cost/attribution never came
+    // from the marker: `turn_end_advisor_runs` and `session_attribution_runs` store the invoking
+    // session id in their own columns, precisely so reports never scan `logs.body`.
+    //
+    // `spawnedSessionId`, `telemetryDir` and `writeTelemetryFn` are still parsed/accepted so the
+    // signature and JSON handling stay unchanged for callers and tests.
+    void spawnedSessionId;
+
+    return text;
 }
 
 // Pass 1 — ask the LLM to list files referenced by the bash command.
@@ -312,7 +374,7 @@ function runLlmCheck(bashCommand, activeChecks, model, timeoutMs, claudeBin, pro
 }
 
 try {
-    const {loadEnvWithLocal, resolveTelemetryDir, getEnvContext, isCompactJson} = require('./env-context');
+    const {loadConfig, resolveTelemetryDir, getEnvContext, isCompactJson} = require('./env-context');
     const {writeTelemetry} = require('./write-telemetry');
     const {getGitRoot} = require('./git-context');
 
@@ -339,29 +401,24 @@ try {
         const cwd = input.cwd || process.cwd();
         hookLog(HOOK_FILE, sessionId, 'activate', `PreToolUse tool=${toolName}`, cwd);
 
-        const envVars = loadEnvWithLocal(path.join(__dirname, '.env'));
+        const config = loadConfig(cwd);
 
-        // Allow opt-out via GUARDRAIL_ENABLED=false
-        if ((envVars.GUARDRAIL_ENABLED || 'true').trim().toLowerCase() === 'false') return;
+        // Allow opt-out via guardrailEnabled: false
+        if (config.guardrailEnabled === false) return;
 
         // Use git repo root as the project boundary so that sessions opened in a
         // subdirectory (e.g. hook/) still enforce the top-level repo root.
         const projectDir = getGitRoot(cwd);
 
         // Resolve prohibited file list (absolute paths)
-        const rawProhibited = (envVars.GUARDRAIL_PROHIBITED_FILES || '').trim();
-        const prohibitedFiles = rawProhibited
-            ? rawProhibited
-                  .split(',')
-                  .map(p => p.trim())
-                  .filter(Boolean)
-                  .map(p => path.normalize(path.resolve(projectDir, p)))
-            : [];
+        const prohibitedFiles = (Array.isArray(config.guardrailProhibitedFiles) ? config.guardrailProhibitedFiles : [])
+            .filter(p => typeof p === 'string' && p.trim())
+            .map(p => path.normalize(path.resolve(projectDir, p.trim())));
 
         // Shared telemetry setup (used only on block)
-        const telemetryDir = resolveTelemetryDir(cwd, envVars);
-        const context = getEnvContext(envVars);
-        const compact = isCompactJson(envVars);
+        const telemetryDir = resolveTelemetryDir(cwd, config);
+        const context = getEnvContext(config);
+        const compact = isCompactJson(config);
         const base = {
             timestamp: new Date().toISOString(),
             session_id: input.session_id || null,
@@ -399,8 +456,8 @@ try {
                 }
             }
 
-            // 2. Project-boundary check (controlled by GUARDRAIL_BLOCK_OUTSIDE_PROJECT)
-            const blockOutside = (envVars.GUARDRAIL_BLOCK_OUTSIDE_PROJECT || 'true').trim().toLowerCase() !== 'false';
+            // 2. Project-boundary check (controlled by guardrailBlockOutsideProject)
+            const blockOutside = config.guardrailBlockOutsideProject !== false;
             if (blockOutside && !isWithinDir(absTarget, projectDir)) {
                 logBlock('outside_project');
                 hookLog(HOOK_FILE, sessionId, 'result', `blocked tool=${toolName} reason=outside_project path="${targetPath}"`, cwd);
@@ -417,15 +474,14 @@ try {
             const bashCommand = ((input.tool_input || {}).command || '').trim();
             if (!bashCommand) return;
 
-            const llmEnabled = (envVars.GUARDRAIL_LLM_ENABLED || 'false').trim().toLowerCase();
-            if (llmEnabled !== 'true') return;
+            if (config.guardrailLlmEnabled !== true) return;
 
-            const model = (envVars.GUARDRAIL_LLM_MODEL || 'haiku').trim();
-            const timeoutMs = parseInt(envVars.GUARDRAIL_LLM_TIMEOUT_MS || '10000', 10);
-            const maxScriptKb = parseInt(envVars.GUARDRAIL_MAX_SCRIPT_SIZE_KB || '10', 10);
+            const model = config.guardrailLlmModel;
+            const timeoutMs = config.guardrailLlmTimeoutMs;
+            const maxScriptKb = config.guardrailMaxScriptSizeKb;
             const maxScriptBytes = maxScriptKb * 1024;
-            const blockNetwork = (envVars.GUARDRAIL_BLOCK_NETWORK || 'false').trim().toLowerCase() === 'true';
-            const blockOutside = (envVars.GUARDRAIL_BLOCK_OUTSIDE_PROJECT || 'true').trim().toLowerCase() !== 'false';
+            const blockNetwork = config.guardrailBlockNetwork === true;
+            const blockOutside = config.guardrailBlockOutsideProject !== false;
 
             // Build active checks — apply wslToWindows + gitBashToWindows + normalize to prohibited file paths
             const resolvedProhibited = prohibitedFiles.map(p => path.normalize(gitBashToWindows(wslToWindows(p))));

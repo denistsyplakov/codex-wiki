@@ -260,6 +260,45 @@ export class FileSystemService {
     return result;
   }
 
+  async getFolderInfo(relativePath: string): Promise<{
+    createdAt: string;
+    fileCount: number;
+    folderCount: number;
+  }> {
+    const fullPath = this.validatePath(relativePath);
+    const stats = await fs.stat(fullPath);
+
+    if (!stats.isDirectory()) {
+      throw new Error("Path is not a directory");
+    }
+
+    let fileCount = 0;
+    let folderCount = 0;
+
+    const walk = async (dirPath: string): Promise<void> => {
+      const entries = await fs.readdir(dirPath, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name.startsWith(".")) continue;
+        // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+        // Safe: entry.name comes from fs.readdir, not user input
+        const entryPath = path.join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+          folderCount++;
+          await walk(entryPath);
+        } else if (entry.isFile() && entry.name.endsWith(".md")) {
+          fileCount++;
+        }
+      }
+    };
+    await walk(fullPath);
+
+    return {
+      createdAt: stats.birthtime.toISOString(),
+      fileCount,
+      folderCount,
+    };
+  }
+
   async createFolder(relativePath: string): Promise<void> {
     const fullPath = this.validatePath(relativePath);
     await fs.mkdir(fullPath, { recursive: true });

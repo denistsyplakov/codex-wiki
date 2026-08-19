@@ -13,6 +13,12 @@ export interface FileNode {
   modifiedAt: string;
 }
 
+export interface FolderInfo {
+  createdAt: string;
+  fileCount: number;
+  folderCount: number;
+}
+
 export interface Page {
   path: string;
   content: string;

@@ -23,14 +23,23 @@ import "./Editor.css";
 interface EditorProps {
   pagePath: string | null;
   onClose: () => void;
+  onBusyChange?: (busy: boolean) => void;
 }
 
-export const Editor: React.FC<EditorProps> = ({ pagePath, onClose }) => {
+export const Editor: React.FC<EditorProps> = ({
+  pagePath,
+  onClose,
+  onBusyChange,
+}) => {
   const { setContent: setStoreContent, scrollEditor } = useEditorStore();
   const [content, setContent] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Tracks the page path this component should currently be showing, so a
+  // response for a page the user has already navigated away from can be
+  // detected and discarded instead of overwriting newer content.
+  const pagePathRef = useRef(pagePath);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [showAttachments, setShowAttachments] = useState(false);
@@ -67,30 +76,46 @@ export const Editor: React.FC<EditorProps> = ({ pagePath, onClose }) => {
   }, [content, setStoreContent]);
 
   useEffect(() => {
+    pagePathRef.current = pagePath;
+
     if (pagePath) {
       loadPage();
     } else {
       setContent("");
       setStoreContent("");
       setError(null);
+      setIsLoading(false);
     }
   }, [pagePath]);
 
+  // Surface loading state to parent so it can show a transition overlay
+  // while the folder/page/preview all settle on the same selection.
+  useEffect(() => {
+    onBusyChange?.(isLoading);
+  }, [isLoading, onBusyChange]);
+
   const loadPage = async () => {
     if (!pagePath) return;
+    const requestedPath = pagePath;
 
     setIsLoading(true);
     setError(null);
     try {
-      const page = await api.getPage(pagePath);
+      const page = await api.getPage(requestedPath);
+      // The user may have already navigated to a different page while this
+      // request was in flight - ignore stale responses.
+      if (pagePathRef.current !== requestedPath) return;
       setContent(page.content);
       // Update store with initial content
       setStoreContent(page.content);
     } catch (err) {
+      if (pagePathRef.current !== requestedPath) return;
       console.error("Failed to load page:", err);
       setError("Failed to load page. Click to retry.");
     } finally {
-      setIsLoading(false);
+      if (pagePathRef.current === requestedPath) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -414,22 +439,6 @@ export const Editor: React.FC<EditorProps> = ({ pagePath, onClose }) => {
         <div className="empty-state">
           <PenLine size={48} className="empty-icon" aria-hidden="true" />
           <p>Select a page to start editing</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (isLoading) {
-    return (
-      <div
-        className="editor loading"
-        role="status"
-        aria-live="polite"
-        aria-label="Loading page"
-      >
-        <div className="loading-state">
-          <div className="loading-spinner" aria-hidden="true"></div>
-          <p>Loading page...</p>
         </div>
       </div>
     );

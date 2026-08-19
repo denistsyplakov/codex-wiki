@@ -5,9 +5,15 @@ import {
   ChevronDown,
   ChevronRight,
   Folder,
+  FolderInput,
+  FolderPlus,
   Loader2,
+  Pencil,
   RefreshCw,
+  Trash2,
 } from "lucide-react";
+import { PromptDialog } from "./PromptDialog";
+import { DeleteFolderDialog } from "./DeleteFolderDialog";
 import "./FolderTree.css";
 
 interface FolderTreeProps {
@@ -19,6 +25,7 @@ interface FolderTreeProps {
   keyboardSelectedPath?: string | null;
   onFolderHover?: (path: string) => void;
   onRequestMove?: (sourcePath: string) => void;
+  deletingPath?: string | null;
 }
 
 const FolderTreeItem: React.FC<FolderTreeProps> = ({
@@ -30,19 +37,15 @@ const FolderTreeItem: React.FC<FolderTreeProps> = ({
   keyboardSelectedPath,
   onFolderHover,
   onRequestMove,
+  deletingPath,
 }) => {
   const [isExpanded, setIsExpanded] = useState(true);
-  const [isRenaming, setIsRenaming] = useState(false);
-  const [newName, setNewName] = useState(node.name);
-  const [showContextMenu, setShowContextMenu] = useState(false);
-  const [isCreating, setIsCreating] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const contextMenuRef = useRef<HTMLDivElement>(null);
 
   const isSelected = selectedFolder === node.path;
   const isKeyboardSelected = keyboardSelectedPath === node.path;
   const hasChildren = node.children.length > 0;
-  const isBusy = isCreating || isDeleting;
+  const isDeleting = deletingPath === node.path;
+  const isBusy = isDeleting;
 
   // Sync with parent's expanded state if provided
   useEffect(() => {
@@ -51,109 +54,12 @@ const FolderTreeItem: React.FC<FolderTreeProps> = ({
     }
   }, [expandedFolders, node.path]);
 
-  // Close context menu when clicking outside or pressing Escape
-  useEffect(() => {
-    if (!showContextMenu) return;
-
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        contextMenuRef.current &&
-        !contextMenuRef.current.contains(event.target as Node)
-      ) {
-        setShowContextMenu(false);
-      }
-    };
-
-    const handleEscapeKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setShowContextMenu(false);
-      }
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    document.addEventListener("keydown", handleEscapeKey);
-
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-      document.removeEventListener("keydown", handleEscapeKey);
-    };
-  }, [showContextMenu]);
-
   const handleToggle = () => {
     setIsExpanded(!isExpanded);
   };
 
   const handleSelect = () => {
     onSelectFolder(node.path);
-  };
-
-  const handleCreateFolder = async () => {
-    const folderName = prompt("Enter folder name:");
-    if (folderName) {
-      setIsCreating(true);
-      setShowContextMenu(false);
-      try {
-        const newPath =
-          node.path === "/" ? folderName : `${node.path}/${folderName}`;
-        await api.createFolder(newPath);
-        onRefresh();
-      } catch (err) {
-        console.error("Failed to create folder:", err);
-        // Show inline error feedback
-      } finally {
-        setIsCreating(false);
-      }
-    } else {
-      setShowContextMenu(false);
-    }
-  };
-
-  const handleRename = () => {
-    setIsRenaming(true);
-    setShowContextMenu(false);
-  };
-
-  const handleRenameSubmit = async () => {
-    if (newName && newName !== node.name) {
-      try {
-        const parentPath = node.path.split("/").slice(0, -1).join("/");
-        const newPath = parentPath ? `${parentPath}/${newName}` : newName;
-        await api.renameFolder(node.path, newPath);
-        onRefresh();
-      } catch (err) {
-        console.error("Failed to rename folder:", err);
-        setNewName(node.name); // Reset to original
-      }
-    }
-    setIsRenaming(false);
-  };
-
-  const handleDelete = async () => {
-    if (confirm(`Delete folder "${node.name}" and all its contents?`)) {
-      setIsDeleting(true);
-      setShowContextMenu(false);
-      try {
-        await api.deleteFolder(node.path);
-        onRefresh();
-      } catch (err) {
-        console.error("Failed to delete folder:", err);
-      } finally {
-        setIsDeleting(false);
-      }
-    } else {
-      setShowContextMenu(false);
-    }
-  };
-
-  const handleMove = () => {
-    setShowContextMenu(false);
-    onRequestMove?.(node.path);
-  };
-
-  const handleContextMenu = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setShowContextMenu(!showContextMenu);
   };
 
   return (
@@ -165,7 +71,6 @@ const FolderTreeItem: React.FC<FolderTreeProps> = ({
       <div
         className={`folder-item ${isSelected ? "selected" : ""} ${isKeyboardSelected ? "keyboard-selected" : ""} ${isBusy ? "busy" : ""}`}
         onClick={handleSelect}
-        onContextMenu={(e) => !isBusy && handleContextMenu(e)}
         onMouseEnter={() => onFolderHover?.(node.path)}
         role="button"
         tabIndex={-1}
@@ -200,88 +105,18 @@ const FolderTreeItem: React.FC<FolderTreeProps> = ({
             )}
           </span>
         </button>
-        {isRenaming ? (
-          <input
-            type="text"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onBlur={handleRenameSubmit}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleRenameSubmit();
-              if (e.key === "Escape") setIsRenaming(false);
-            }}
-            onClick={(e) => e.stopPropagation()}
-            autoFocus
-            aria-label="Rename folder"
-          />
-        ) : (
-          <span className="folder-name">
-            {isDeleting ? (
-              <Loader2
-                size={14}
-                className="loading-spinner"
-                aria-hidden="true"
-              />
-            ) : (
-              <Folder size={14} aria-hidden="true" />
-            )}{" "}
-            {node.name}
-            {isCreating && (
-              <span
-                className="folder-creating"
-                role="status"
-                aria-live="polite"
-              >
-                {" "}
-                (creating...)
-              </span>
-            )}
-          </span>
-        )}
-        {showContextMenu && !isBusy && (
-          <div
-            className="context-menu"
-            ref={contextMenuRef}
-            onClick={(e) => e.stopPropagation()}
-            role="menu"
-            aria-label="Folder actions"
-          >
-            <button
-              onClick={handleCreateFolder}
-              disabled={isCreating}
-              role="menuitem"
-              aria-label="Create new folder"
-            >
-              {isCreating ? "Creating..." : "New Folder"}
-            </button>
-            {node.path !== "/" && (
-              <>
-                <button
-                  onClick={handleRename}
-                  role="menuitem"
-                  aria-label={`Rename ${node.name}`}
-                >
-                  Rename
-                </button>
-                <button
-                  onClick={handleMove}
-                  role="menuitem"
-                  aria-label={`Move ${node.name}`}
-                >
-                  Move to...
-                </button>
-                <button
-                  onClick={handleDelete}
-                  disabled={isDeleting}
-                  role="menuitem"
-                  aria-label={`Delete ${node.name}`}
-                >
-                  {isDeleting ? "Deleting..." : "Delete"}
-                </button>
-              </>
-            )}
-          </div>
-        )}
+        <span className="folder-name">
+          {isDeleting ? (
+            <Loader2
+              size={14}
+              className="loading-spinner"
+              aria-hidden="true"
+            />
+          ) : (
+            <Folder size={14} aria-hidden="true" />
+          )}{" "}
+          {node.name}
+        </span>
       </div>
       {isExpanded && hasChildren && (
         <div className="folder-children" role="group">
@@ -296,6 +131,7 @@ const FolderTreeItem: React.FC<FolderTreeProps> = ({
               keyboardSelectedPath={keyboardSelectedPath}
               onFolderHover={onFolderHover}
               onRequestMove={onRequestMove}
+              deletingPath={deletingPath}
             />
           ))}
         </div>
@@ -356,7 +192,14 @@ export const FolderTree: React.FC<
   const [moveDestination, setMoveDestination] = useState<string>("");
   const [isMoving, setIsMoving] = useState(false);
   const [moveError, setMoveError] = useState<string | null>(null);
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [isFolderPromptOpen, setIsFolderPromptOpen] = useState(false);
+  const [deletingPath, setDeletingPath] = useState<string | null>(null);
+  const [isRenamePromptOpen, setIsRenamePromptOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const treeRef = useRef<HTMLElement>(null);
+
+  const canModifySelected = !!selectedFolder && selectedFolder !== "/";
 
   // Flatten visible folders for keyboard navigation
   const visibleFolders = useMemo(() => {
@@ -439,6 +282,68 @@ export const FolderTree: React.FC<
     }
   };
 
+  const handleToolbarCreateFolder = () => {
+    setIsFolderPromptOpen(true);
+  };
+
+  const handleCreateFolderConfirm = async (folderName: string) => {
+    setIsFolderPromptOpen(false);
+    setIsCreatingFolder(true);
+    try {
+      const base =
+        !selectedFolder || selectedFolder === "/" ? "" : selectedFolder;
+      const newPath = base ? `${base}/${folderName}` : folderName;
+      await api.createFolder(newPath);
+      onRefresh();
+    } catch (err) {
+      console.error("Failed to create folder:", err);
+    } finally {
+      setIsCreatingFolder(false);
+    }
+  };
+
+  const handleToolbarRename = () => {
+    if (!canModifySelected || !selectedFolder) return;
+    setIsRenamePromptOpen(true);
+  };
+
+  const handleRenameConfirm = async (newName: string) => {
+    setIsRenamePromptOpen(false);
+    if (!selectedFolder) return;
+    const currentName = selectedFolder.split("/").pop() ?? selectedFolder;
+    if (newName !== currentName) {
+      try {
+        const parentPath = selectedFolder.split("/").slice(0, -1).join("/");
+        const newPath = parentPath ? `${parentPath}/${newName}` : newName;
+        await api.renameFolder(selectedFolder, newPath);
+        onRefresh();
+      } catch (err) {
+        console.error("Failed to rename folder:", err);
+      }
+    }
+  };
+
+  const handleToolbarDelete = () => {
+    if (!canModifySelected || !selectedFolder) return;
+    setDeleteTarget(selectedFolder);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return;
+    const target = deleteTarget;
+    setDeletingPath(target);
+    try {
+      await api.deleteFolder(target);
+      onRefresh();
+      onSelectFolder("/");
+    } catch (err) {
+      console.error("Failed to delete folder:", err);
+    } finally {
+      setDeletingPath(null);
+      setDeleteTarget(null);
+    }
+  };
+
   return (
     <nav
       ref={treeRef}
@@ -458,16 +363,85 @@ export const FolderTree: React.FC<
           <RefreshCw size={14} aria-hidden="true" />
         </button>
       </div>
-      <FolderTreeItem
-        node={root}
-        onSelectFolder={onSelectFolder}
-        selectedFolder={selectedFolder}
-        onRefresh={onRefresh}
-        expandedFolders={expandedFolders}
-        keyboardSelectedPath={keyboardSelectedPath}
-        onFolderHover={handleFolderHover}
-        onRequestMove={handleRequestMove}
-      />
+      <div className="folder-tree-toolbar">
+        <button
+          className="folder-toolbar-btn"
+          onClick={handleToolbarCreateFolder}
+          disabled={isCreatingFolder}
+          title="New folder"
+          aria-label="New folder"
+        >
+          <FolderPlus size={14} aria-hidden="true" />
+        </button>
+        <button
+          className="folder-toolbar-btn"
+          onClick={handleToolbarRename}
+          disabled={!canModifySelected}
+          title="Rename folder"
+          aria-label="Rename folder"
+        >
+          <Pencil size={14} aria-hidden="true" />
+        </button>
+        <button
+          className="folder-toolbar-btn"
+          onClick={() => selectedFolder && handleRequestMove(selectedFolder)}
+          disabled={!canModifySelected}
+          title="Move to..."
+          aria-label="Move to..."
+        >
+          <FolderInput size={14} aria-hidden="true" />
+        </button>
+        <button
+          className="folder-toolbar-btn"
+          onClick={handleToolbarDelete}
+          disabled={!canModifySelected}
+          title="Delete folder"
+          aria-label="Delete folder"
+        >
+          <Trash2 size={14} aria-hidden="true" />
+        </button>
+      </div>
+      <div className="folder-tree-body">
+        <FolderTreeItem
+          node={root}
+          onSelectFolder={onSelectFolder}
+          selectedFolder={selectedFolder}
+          onRefresh={onRefresh}
+          expandedFolders={expandedFolders}
+          keyboardSelectedPath={keyboardSelectedPath}
+          onFolderHover={handleFolderHover}
+          onRequestMove={handleRequestMove}
+          deletingPath={deletingPath}
+        />
+      </div>
+      {isFolderPromptOpen && (
+        <PromptDialog
+          title="New Folder"
+          label="Folder name:"
+          inputName="new-folder-name"
+          confirmLabel="Create"
+          onConfirm={handleCreateFolderConfirm}
+          onCancel={() => setIsFolderPromptOpen(false)}
+        />
+      )}
+      {isRenamePromptOpen && selectedFolder && (
+        <PromptDialog
+          title="Rename Folder"
+          label="Folder name:"
+          inputName="rename-folder-name"
+          initialValue={selectedFolder.split("/").pop() ?? selectedFolder}
+          confirmLabel="Rename"
+          onConfirm={handleRenameConfirm}
+          onCancel={() => setIsRenamePromptOpen(false)}
+        />
+      )}
+      {deleteTarget && (
+        <DeleteFolderDialog
+          folderPath={deleteTarget}
+          onConfirm={handleDeleteConfirm}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
       {moveSource && (
         <div
           className="move-modal-overlay"

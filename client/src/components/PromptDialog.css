@@ -1,0 +1,91 @@
+.prompt-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.prompt-dialog {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  width: 320px;
+  max-width: 90vw;
+  box-shadow: 0 8px 32px var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.prompt-dialog-title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.prompt-dialog-label {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.prompt-dialog-input {
+  padding: 7px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.prompt-dialog-input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+}
+
+.prompt-dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.prompt-dialog-cancel {
+  padding: 6px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  transition: background var(--transition-fast);
+}
+
+.prompt-dialog-cancel:hover {
+  background: var(--bg-hover);
+}
+
+.prompt-dialog-confirm {
+  padding: 6px 14px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--accent-color);
+  color: var(--accent-text);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  transition: background var(--transition-fast);
+}
+
+.prompt-dialog-confirm:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.prompt-dialog-confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

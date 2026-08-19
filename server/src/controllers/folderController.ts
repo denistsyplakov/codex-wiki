@@ -32,6 +32,25 @@ export const createFolder = async (req: Request, res: Response) => {
   }
 };
 
+export const getFolderInfo = async (req: Request, res: Response) => {
+  try {
+    const pathParam = req.params.path;
+    const path = Array.isArray(pathParam) ? pathParam.join("/") : pathParam;
+
+    if (!path) {
+      return res.status(400).json({ error: "Path is required" });
+    }
+
+    const info = await fileSystemService.getFolderInfo(path);
+    res.json(info);
+  } catch (error) {
+    res.status(500).json({
+      error: "Failed to get folder info",
+      message: (error as Error).message,
+    });
+  }
+};
+
 export const deleteFolder = async (req: Request, res: Response) => {
   try {
     const pathParam = req.params.path;

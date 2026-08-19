@@ -463,6 +463,7 @@ const MermaidBlock: React.FC<{ code: string }> = ({ code }) => {
 interface PreviewProps {
   pagePath: string | null;
   onNavigate?: (path: string) => void;
+  onBusyChange?: (busy: boolean) => void;
 }
 
 const PreviewScrollSync: React.FC<{
@@ -667,22 +668,39 @@ const MarkdownRenderer = React.memo(
     prev.onNavigate === next.onNavigate,
 );
 
-export const Preview: React.FC<PreviewProps> = ({ pagePath, onNavigate }) => {
+export const Preview: React.FC<PreviewProps> = ({
+  pagePath,
+  onNavigate,
+  onBusyChange,
+}) => {
   const liveContent = useEditorStore((state) => state.content);
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  // Tracks the page path this component should currently be showing, so a
+  // response for a page the user has already navigated away from can be
+  // detected and discarded instead of overwriting newer content.
+  const pagePathRef = useRef(pagePath);
 
   // Load initial content from API when page changes
   useEffect(() => {
+    pagePathRef.current = pagePath;
+
     if (pagePath) {
       loadPage();
     } else {
       setContent("");
+      setLoading(false);
     }
   }, [pagePath]);
+
+  // Surface loading state to parent so it can show a transition overlay
+  // while the folder/page/editor all settle on the same selection.
+  useEffect(() => {
+    onBusyChange?.(loading);
+  }, [loading, onBusyChange]);
 
   // Use live content when available (from editor) - overrides loaded content
   useEffect(() => {
@@ -693,15 +711,22 @@ export const Preview: React.FC<PreviewProps> = ({ pagePath, onNavigate }) => {
 
   const loadPage = async () => {
     if (!pagePath) return;
+    const requestedPath = pagePath;
 
     setLoading(true);
     try {
-      const page = await api.getPage(pagePath);
+      const page = await api.getPage(requestedPath);
+      // The user may have already navigated to a different page while this
+      // request was in flight - ignore stale responses.
+      if (pagePathRef.current !== requestedPath) return;
       setContent(page.content);
     } catch (error) {
+      if (pagePathRef.current !== requestedPath) return;
       console.error("Failed to load page for preview:", error);
     } finally {
-      setLoading(false);
+      if (pagePathRef.current === requestedPath) {
+        setLoading(false);
+      }
     }
   };
 
@@ -1819,16 +1844,6 @@ ${htmlContent}
           aria-label="Preview controls"
         >
           {content && <TableOfContents content={content} />}
-          {loading && (
-            <span
-              className="loading-indicator"
-              role="status"
-              aria-label="Loading"
-              aria-live="polite"
-            >
-              <span aria-hidden="true">●</span>
-            </span>
-          )}
           <div className="export-dropdown" ref={exportMenuRef}>
             <button
               className="export-dropdown-btn"

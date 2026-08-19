@@ -8,7 +8,11 @@ import {
   Loader2,
   AlertTriangle,
   Folder,
+  Pencil,
+  FolderInput,
+  Trash2,
 } from "lucide-react";
+import { PromptDialog } from "./PromptDialog";
 import "./PageList.css";
 
 type TemplateOption = {
@@ -42,6 +46,7 @@ interface PageListProps {
   selectedPage: string | null;
   onRefresh: () => void;
   folderTree: FolderNode | null;
+  onBusyChange?: (busy: boolean) => void;
 }
 
 export const PageList: React.FC<PageListProps> = ({
@@ -50,11 +55,11 @@ export const PageList: React.FC<PageListProps> = ({
   selectedPage,
   onRefresh,
   folderTree,
+  onBusyChange,
 }) => {
   const [pages, setPages] = useState<FileNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [contextMenuPage, setContextMenuPage] = useState<string | null>(null);
   const [renamingPage, setRenamingPage] = useState<string | null>(null);
   const [newPageName, setNewPageName] = useState("");
   const [movingPage, setMovingPage] = useState<string | null>(null);
@@ -64,41 +69,15 @@ export const PageList: React.FC<PageListProps> = ({
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const [templatesError, setTemplatesError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
+  const [pageNamePrompt, setPageNamePrompt] = useState<{
+    resolve: (value: string | null) => void;
+  } | null>(null);
   const [isMoving, setIsMoving] = useState(false);
   const [moveDestination, setMoveDestination] = useState<string>("");
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const contextMenuRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
-
-  // Close context menu when clicking outside or pressing Escape
-  useEffect(() => {
-    if (!contextMenuPage) return;
-
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        contextMenuRef.current &&
-        !contextMenuRef.current.contains(event.target as Node)
-      ) {
-        setContextMenuPage(null);
-      }
-    };
-
-    const handleEscapeKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setContextMenuPage(null);
-      }
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    document.addEventListener("keydown", handleEscapeKey);
-
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-      document.removeEventListener("keydown", handleEscapeKey);
-    };
-  }, [contextMenuPage]);
 
   const sortedPages = useMemo(() => {
     return [...pages].sort((a, b) => {
@@ -148,6 +127,12 @@ export const PageList: React.FC<PageListProps> = ({
     loadPages();
   }, [selectedFolder]);
 
+  // Surface busy state to parent so it can show a transition overlay while
+  // pages are (re)loading or a create/delete/move operation is in flight.
+  useEffect(() => {
+    onBusyChange?.(loading || isCreating || isDeleting !== null || isMoving);
+  }, [loading, isCreating, isDeleting, isMoving, onBusyChange]);
+
   const loadPages = async () => {
     setLoading(true);
     setError(null);
@@ -169,10 +154,10 @@ export const PageList: React.FC<PageListProps> = ({
     return !selectedFolder || selectedFolder === "/" ? "" : selectedFolder;
   };
 
-  const promptForPageName = (): string | null => {
-    const pageName = prompt("Enter page name (without .md extension):");
-    if (!pageName) return null;
-    return pageName.trim() ? pageName.trim() : null;
+  const promptForPageName = (): Promise<string | null> => {
+    return new Promise((resolve) => {
+      setPageNamePrompt({ resolve });
+    });
   };
 
   const buildPagePath = (folderPath: string, fileName: string): string => {
@@ -218,7 +203,7 @@ export const PageList: React.FC<PageListProps> = ({
   };
 
   const createFromBlank = async () => {
-    const pageName = promptForPageName();
+    const pageName = await promptForPageName();
     if (!pageName) return;
 
     setIsCreating(true);
@@ -247,7 +232,7 @@ export const PageList: React.FC<PageListProps> = ({
       const stamp = formatTimestamp(new Date());
       fileName = ensureMd(`${slug}-${stamp}`);
     } else {
-      const pageName = promptForPageName();
+      const pageName = await promptForPageName();
       if (!pageName) return;
       fileName = ensureMd(pageName);
     }
@@ -272,11 +257,9 @@ export const PageList: React.FC<PageListProps> = ({
     await openTemplatePicker();
   };
 
-  const handleDeletePage = async (path: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleDeletePage = async (path: string) => {
     if (confirm(`Delete page "${path}"?`)) {
       setIsDeleting(path);
-      setContextMenuPage(null);
       try {
         await api.deletePage(path);
         loadPages();
@@ -290,15 +273,12 @@ export const PageList: React.FC<PageListProps> = ({
       } finally {
         setIsDeleting(null);
       }
-    } else {
-      setContextMenuPage(null);
     }
   };
 
   const handleRenamePage = (path: string, name: string) => {
     setRenamingPage(path);
     setNewPageName(name.replace(".md", ""));
-    setContextMenuPage(null);
   };
 
   const handleRenameSubmit = async (oldPath: string) => {
@@ -329,16 +309,9 @@ export const PageList: React.FC<PageListProps> = ({
     setRenamingPage(null);
   };
 
-  const handleContextMenu = (e: React.MouseEvent, path: string) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setContextMenuPage(contextMenuPage === path ? null : path);
-  };
-
   const handleMovePage = (path: string) => {
     setMovingPage(path);
     setMoveDestination("");
-    setContextMenuPage(null);
   };
 
   const handleMoveSubmit = async () => {
@@ -431,6 +404,43 @@ export const PageList: React.FC<PageListProps> = ({
         </div>
       </div>
 
+      <div className="page-list-toolbar">
+        <button
+          onClick={() => {
+            const page = sortedPages.find((p) => p.path === selectedPage);
+            if (page) handleRenamePage(page.path, page.name);
+          }}
+          disabled={!selectedPage}
+          className="toolbar-icon-btn"
+          title="Rename page"
+          aria-label="Rename selected page"
+        >
+          <Pencil size={14} />
+        </button>
+        <button
+          onClick={() => {
+            if (selectedPage) handleMovePage(selectedPage);
+          }}
+          disabled={!selectedPage}
+          className="toolbar-icon-btn"
+          title="Move page to..."
+          aria-label="Move selected page to another folder"
+        >
+          <FolderInput size={14} />
+        </button>
+        <button
+          onClick={() => {
+            if (selectedPage) handleDeletePage(selectedPage);
+          }}
+          disabled={!selectedPage}
+          className="toolbar-icon-btn"
+          title="Delete page"
+          aria-label="Delete selected page"
+        >
+          <Trash2 size={14} />
+        </button>
+      </div>
+
       {/* Error State */}
       {error && (
         <div
@@ -477,9 +487,6 @@ export const PageList: React.FC<PageListProps> = ({
               key={page.path}
               className={`page-item ${selectedPage === page.path ? "selected" : ""} ${index === selectedIndex ? "keyboard-selected" : ""} ${isDeleting === page.path ? "deleting" : ""}`}
               onClick={() => !isDeleting && onSelectPage(page.path)}
-              onContextMenu={(e) =>
-                !isDeleting && handleContextMenu(e, page.path)
-              }
               onMouseEnter={() => setSelectedIndex(index)}
               role="button"
               tabIndex={-1}
@@ -511,37 +518,6 @@ export const PageList: React.FC<PageListProps> = ({
                 />
               ) : (
                 <span className="page-name">{page.name}</span>
-              )}
-              {contextMenuPage === page.path && (
-                <div
-                  ref={contextMenuRef}
-                  className="page-context-menu"
-                  onClick={(e) => e.stopPropagation()}
-                  role="menu"
-                  aria-label="Page actions"
-                >
-                  <button
-                    onClick={() => handleRenamePage(page.path, page.name)}
-                    role="menuitem"
-                    aria-label={`Rename ${page.name}`}
-                  >
-                    Rename
-                  </button>
-                  <button
-                    onClick={() => handleMovePage(page.path)}
-                    role="menuitem"
-                    aria-label={`Move ${page.name} to another folder`}
-                  >
-                    Move to...
-                  </button>
-                  <button
-                    onClick={(e) => handleDeletePage(page.path, e)}
-                    role="menuitem"
-                    aria-label={`Delete ${page.name}`}
-                  >
-                    Delete
-                  </button>
-                </div>
               )}
             </li>
           ))}
@@ -680,6 +656,23 @@ export const PageList: React.FC<PageListProps> = ({
             </button>
           </div>
         </div>
+      )}
+
+      {pageNamePrompt && (
+        <PromptDialog
+          title="New Page"
+          label="Page name (without .md extension):"
+          inputName="new-page-name"
+          confirmLabel="Create"
+          onConfirm={(value) => {
+            pageNamePrompt.resolve(value);
+            setPageNamePrompt(null);
+          }}
+          onCancel={() => {
+            pageNamePrompt.resolve(null);
+            setPageNamePrompt(null);
+          }}
+        />
       )}
     </nav>
   );

@@ -106,6 +106,17 @@ function App() {
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const [selectedPage, setSelectedPage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Track whether the folder/page selection or the page list is still
+  // settling on a new state, so we can mask the UI and avoid the user
+  // seeing (or interacting with) a mismatched folder/page/content combo
+  // while quick successive selections are still in flight.
+  const [isFolderSwitching, setIsFolderSwitching] = useState(false);
+  const [isEditorBusy, setIsEditorBusy] = useState(false);
+  const [isPreviewBusy, setIsPreviewBusy] = useState(false);
+  const [isPageListBusy, setIsPageListBusy] = useState(false);
+  const isTransitioning =
+    isFolderSwitching || isEditorBusy || isPreviewBusy || isPageListBusy;
   const [leftPaneCollapsed, setLeftPaneCollapsed] = useState(false);
   const [rightPaneCollapsed, setRightPaneCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false); // Track if we're on mobile for overlay behavior
@@ -531,36 +542,41 @@ function App() {
   };
 
   const handleSelectFolder = async (path: string) => {
-    const isSameFolder = selectedFolder === path;
-    setSelectedFolder(path);
+    setIsFolderSwitching(true);
+    try {
+      const isSameFolder = selectedFolder === path;
+      setSelectedFolder(path);
 
-    // Only clear selected page if switching to a different folder
-    if (!isSameFolder) {
-      setSelectedPage(null);
-    }
-
-    // Auto-select README.md if it exists in the folder (or keep current page if same folder)
-    if (!isSameFolder || !selectedPage) {
-      try {
-        setError(null);
-        const folderPath = path === "/" ? "" : path;
-        const pages = await api.getPages(folderPath);
-        const readme = pages.find(
-          (page) => page.name.toLowerCase() === "readme.md",
-        );
-        if (readme) {
-          setSelectedPage(readme.path);
-        }
-      } catch (error: unknown) {
-        console.error("Failed to check for README.md:", error);
-        const message =
-          (error as { response?: { status?: number } })?.response?.status ===
-          401
-            ? "Session expired. Please log in again."
-            : `Failed to load pages from folder: ${path}`;
-        setError(message);
-        // Don't prevent folder selection on error, just show the error
+      // Only clear selected page if switching to a different folder
+      if (!isSameFolder) {
+        setSelectedPage(null);
       }
+
+      // Auto-select README.md if it exists in the folder (or keep current page if same folder)
+      if (!isSameFolder || !selectedPage) {
+        try {
+          setError(null);
+          const folderPath = path === "/" ? "" : path;
+          const pages = await api.getPages(folderPath);
+          const readme = pages.find(
+            (page) => page.name.toLowerCase() === "readme.md",
+          );
+          if (readme) {
+            setSelectedPage(readme.path);
+          }
+        } catch (error: unknown) {
+          console.error("Failed to check for README.md:", error);
+          const message =
+            (error as { response?: { status?: number } })?.response
+              ?.status === 401
+              ? "Session expired. Please log in again."
+              : `Failed to load pages from folder: ${path}`;
+          setError(message);
+          // Don't prevent folder selection on error, just show the error
+        }
+      }
+    } finally {
+      setIsFolderSwitching(false);
     }
   };
 
@@ -1114,6 +1130,7 @@ function App() {
                         selectedPage={selectedPage}
                         onRefresh={loadFolderTree}
                         folderTree={folderTree}
+                        onBusyChange={setIsPageListBusy}
                       />
                     </div>
                   </div>
@@ -1158,7 +1175,11 @@ function App() {
                     : "1 1 100%",
                 }}
               >
-                <Editor pagePath={selectedPage} onClose={handleCloseEditor} />
+                <Editor
+                  pagePath={selectedPage}
+                  onClose={handleCloseEditor}
+                  onBusyChange={setIsEditorBusy}
+                />
                 {!showAIChat && enableAISearch && (
                   <button
                     className="expand-btn expand-btn-bottom"
@@ -1231,6 +1252,7 @@ function App() {
                     <Preview
                       pagePath={selectedPage}
                       onNavigate={handleSelectPage}
+                      onBusyChange={setIsPreviewBusy}
                     />
                   </div>
                 </>
@@ -1238,6 +1260,21 @@ function App() {
             </aside>
           </div>
         </ErrorBoundary>
+
+        {/* Transition overlay: masks the UI while the folder/page selection
+            (or a create/delete/move operation) is still settling, so the
+            user never sees content from a folder/page they've already
+            navigated away from. */}
+        {isTransitioning && (
+          <div
+            className="transition-overlay"
+            role="status"
+            aria-live="polite"
+            aria-label="Loading"
+          >
+            <div className="loading-spinner" aria-hidden="true"></div>
+          </div>
+        )}
       </main>
     </div>
   );

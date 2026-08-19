@@ -29,7 +29,7 @@ import {
 } from "./services/fileSystem";
 
 const app: Express = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 7001;
 
 // Initialize Git service
 const DATA_DIR =

@@ -1,6 +1,7 @@
 import axios from "axios";
 import {
   FolderNode,
+  FolderInfo,
   FileNode,
   Page,
   CommitInfo,
@@ -59,6 +60,11 @@ export const api = {
 
   deleteFolder: async (path: string): Promise<void> => {
     await axios.delete(`${API_BASE}/folders/${path}`);
+  },
+
+  getFolderInfo: async (path: string): Promise<FolderInfo> => {
+    const response = await axios.get(`${API_BASE}/folders/info/${path}`);
+    return response.data;
   },
 
   renameFolder: async (oldPath: string, newPath: string): Promise<void> => {

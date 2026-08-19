@@ -1,0 +1,78 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"require(require('child_process').execSync('git rev-parse --show-toplevel').toString().trim()+'/.claude/telemetry_tool/telemetry-hook.js')\"",
+            "statusMessage": "Recording prompt..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"require(require('child_process').execSync('git rev-parse --show-toplevel').toString().trim()+'/.claude/telemetry_tool/guardrail-hook.js')\"",
+            "statusMessage": "Checking file access..."
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"require(require('child_process').execSync('git rev-parse --show-toplevel').toString().trim()+'/.claude/telemetry_tool/guardrail-hook.js')\"",
+            "statusMessage": "Checking file access..."
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"require(require('child_process').execSync('git rev-parse --show-toplevel').toString().trim()+'/.claude/telemetry_tool/guardrail-hook.js')\"",
+            "statusMessage": "Checking file access..."
+          }
+        ]
+      },
+      {
+        "matcher": "Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"require(require('child_process').execSync('git rev-parse --show-toplevel').toString().trim()+'/.claude/telemetry_tool/guardrail-hook.js')\"",
+            "statusMessage": "Checking file access..."
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"require(require('child_process').execSync('git rev-parse --show-toplevel').toString().trim()+'/.claude/telemetry_tool/guardrail-hook.js')\"",
+            "statusMessage": "Checking bash command..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"require(require('child_process').execSync('git rev-parse --show-toplevel').toString().trim()+'/.claude/telemetry_tool/send-logs-hook.js')\"",
+            "statusMessage": "Uploading logs..."
+          }
+        ]
+      }
+    ]
+  }
+}
